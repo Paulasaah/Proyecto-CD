@@ -3,6 +3,7 @@
  * Extrae landmarks de las manos en tiempo real
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { Platform } from 'react-native';
 import { mediaPipeService } from '../services/mediapipe';
 
 interface UseMediaPipeResult {
@@ -21,6 +22,12 @@ export const useMediaPipe = (): UseMediaPipeResult => {
 
   // Inicializar MediaPipe al montar el componente
   useEffect(() => {
+    if (Platform.OS !== 'web') {
+      setIsReady(false);
+      setError('MediaPipe solo está disponible en la versión web');
+      return;
+    }
+
     const init = async () => {
       try {
         console.log('🔄 Inicializando MediaPipe Hands...');

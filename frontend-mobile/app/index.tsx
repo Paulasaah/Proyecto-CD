@@ -7,7 +7,7 @@ import { Button, Text, Card, ActivityIndicator } from 'react-native-paper';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { usePredictionStore } from '../src/store/predictionStore';
-import { checkHealth, predictSign } from '../src/services/api';
+import { checkHealth, predictSign, predictSignFromVideo } from '../src/services/api';
 import { useMediaPipe } from '../src/hooks/useMediaPipe';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -21,7 +21,9 @@ export default function HomeScreen() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { currentPrediction, isLoading, setPrediction, addToHistory, setLoading, setError } = usePredictionStore();
-  const { captureFrames, processVideoFile, isProcessing, isReady: mediaPipeReady } = useMediaPipe();
+  const { captureFrames, processVideoFile, isProcessing, isReady: mediaPipeReady, error: mediaPipeError } = useMediaPipe();
+
+  const isWeb = Platform.OS === 'web';
 
   const isLowConfidence = currentPrediction
     ? currentPrediction.confidence < LOW_CONFIDENCE_THRESHOLD
@@ -56,35 +58,81 @@ export default function HomeScreen() {
       Alert.alert('Error', 'El backend no está disponible');
       return;
     }
+    // Flujo web: usar MediaPipe en el navegador
+    if (isWeb) {
+      if (!mediaPipeReady) {
+        Alert.alert(
+          'MediaPipe',
+          'MediaPipe todavía se está inicializando. Intenta de nuevo en unos segundos.'
+        );
+        return;
+      }
 
+      try {
+        setLoading(true);
+        if (!cameraEnabled) {
+          setCameraEnabled(true);
+        }
+        // Obtener el elemento de video (en web)
+        const videoElement = document.querySelector('video') as HTMLVideoElement;
+        if (!videoElement) {
+          throw new Error('No se encontró el elemento de video');
+        }
+
+        // Capturar 40 frames con landmarks
+        console.log('🎬 Capturando seña (web)...');
+        const landmarks = await captureFrames(videoElement);
+        
+        // Enviar al backend
+        console.log('📤 Enviando al backend...');
+        const prediction = await predictSign(landmarks);
+        
+        // Actualizar estado
+        setPrediction(prediction);
+        addToHistory(prediction);
+        
+        console.log('✅ Predicción:', prediction.prediction, `(${(prediction.confidence * 100).toFixed(1)}%)`);
+        
+      } catch (error) {
+        console.error('❌ Error en captura (web):', error);
+        const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+        setError(errorMessage);
+        Alert.alert('Error', `No se pudo procesar la seña: ${errorMessage}`);
+      } finally {
+        setLoading(false);
+      }
+
+      return;
+    }
+
+    // Flujo móvil nativo: grabar un video corto y enviarlo al backend
     try {
-      setLoading(true);
-      if (!cameraEnabled) {
-        setCameraEnabled(true);
-      }
-      // Obtener el elemento de video (en web)
-      const videoElement = document.querySelector('video') as HTMLVideoElement;
-      if (!videoElement) {
-        throw new Error('No se encontró el elemento de video');
+      if (!cameraRef.current) {
+        throw new Error('La cámara no está lista');
       }
 
-      // Capturar 40 frames con landmarks
-      console.log('🎬 Capturando seña...');
-      const landmarks = await captureFrames(videoElement);
-      
-      // Enviar al backend
-      console.log('📤 Enviando al backend...');
-      const prediction = await predictSign(landmarks);
-      
-      // Actualizar estado
+      setLoading(true);
+      console.log('🎬 Grabando video de la seña (móvil)...');
+
+      const recording = await cameraRef.current.recordAsync({
+        maxDuration: 3,
+        quality: '480p',
+      });
+
+      if (!recording?.uri) {
+        throw new Error('No se pudo obtener el video grabado');
+      }
+
+      console.log('📤 Enviando video al backend...');
+      const prediction = await predictSignFromVideo(recording.uri);
+
       setPrediction(prediction);
       addToHistory(prediction);
-      
-      console.log('✅ Predicción:', prediction.prediction, `(${(prediction.confidence * 100).toFixed(1)}%)`);
-      
+
+      console.log('✅ Predicción desde video (móvil):', prediction.prediction, `(${(prediction.confidence * 100).toFixed(1)}%)`);
     } catch (error) {
-      console.error('❌ Error en captura:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('❌ Error en captura (móvil):', error);
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido al grabar o enviar el video';
       setError(errorMessage);
       Alert.alert('Error', `No se pudo procesar la seña: ${errorMessage}`);
     } finally {
@@ -164,14 +212,27 @@ export default function HomeScreen() {
           </View>
           <View style={[styles.statusRow, { marginTop: 8 }]}>
             <Text variant="bodyMedium">MediaPipe:</Text>
-            <View style={[
-              styles.statusIndicator,
-              { backgroundColor: mediaPipeReady ? '#4caf50' : '#ff9800' }
-            ]} />
+            <View
+              style={[
+                styles.statusIndicator,
+                {
+                  backgroundColor: isWeb
+                    ? (mediaPipeReady ? '#4caf50' : '#ff9800')
+                    : '#9e9e9e',
+                },
+              ]}
+            />
             <Text variant="bodyMedium">
-              {mediaPipeReady ? 'Listo' : 'Cargando...'}
+              {isWeb
+                ? (mediaPipeReady ? 'Listo' : 'Cargando...')
+                : 'No disponible en móvil (demo web)'}
             </Text>
           </View>
+          {mediaPipeError && (
+            <Text variant="bodySmall" style={styles.mediaPipeErrorText}>
+              {mediaPipeError}
+            </Text>
+          )}
         </Card.Content>
       </Card>
 
@@ -276,8 +337,7 @@ export default function HomeScreen() {
             isLoading ||
             isProcessing ||
             backendStatus !== 'online' ||
-            !mediaPipeReady ||
-            !cameraEnabled
+            (isWeb && (!mediaPipeReady || !cameraEnabled))
           }
           style={styles.captureButton}
           icon="camera"
@@ -444,5 +504,11 @@ const styles = StyleSheet.create({
   },
   historyButton: {
     borderColor: '#6200ee',
+  },
+  mediaPipeErrorText: {
+    marginTop: 4,
+    marginHorizontal: 16,
+    color: '#f44336',
+    fontSize: 12,
   },
 });

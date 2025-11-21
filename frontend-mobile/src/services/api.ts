@@ -6,9 +6,11 @@ import { PredictionResponse, LandmarksRequest } from '../types';
 
 // URL del backend - cambiar según el entorno
 // Para web, usa la IP de tu máquina local (no localhost)
-const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.38:8000/api/v1'  // Desarrollo local (tu IP local)
-  : 'http://20.246.73.238:8000/api/v1';  // Producción Azure
+//const API_BASE_URL = __DEV__ 
+  //? 'http://192.168.1.38:8080/api/v1'  // Desarrollo local (tu IP local)
+  //: 'http://52.90.134.62:8080/api/v1';  // AWS
+
+const API_BASE_URL = 'http://52.90.134.62:8080/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -41,6 +43,32 @@ export const predictSign = async (landmarks: number[][]): Promise<PredictionResp
     return response.data;
   } catch (error) {
     console.error('Error predicting sign:', error);
+    throw error;
+  }
+};
+
+/**
+ * Envía un video al backend para obtener predicción (móvil nativo)
+ */
+export const predictSignFromVideo = async (videoUri: string): Promise<PredictionResponse> => {
+  try {
+    const formData = new FormData();
+
+    (formData as any).append('file', {
+      uri: videoUri,
+      name: 'sign-video.mp4',
+      type: 'video/mp4',
+    } as any);
+
+    const response = await api.post<PredictionResponse>('/predict-video', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error predicting sign from video:', error);
     throw error;
   }
 };

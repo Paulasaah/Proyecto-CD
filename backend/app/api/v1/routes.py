@@ -2,14 +2,19 @@
 Rutas de la API v1.
 Principio: Single Responsibility - Solo define endpoints.
 """
-from fastapi import APIRouter, HTTPException, status
+import os
+import tempfile
+
+from fastapi import APIRouter, HTTPException, status, UploadFile, File
 from app.models.schemas import LandmarksRequest, PredictionResponse, HealthResponse
 from app.services.predictor import PredictorService
+from app.services.video_processor import VideoProcessorService
 
 router = APIRouter()
 
-# Inicializar servicio (singleton)
+# Inicializar servicios (singleton)
 predictor = PredictorService.get_instance()
+video_processor = VideoProcessorService()
 
 
 @router.post(
@@ -44,6 +49,48 @@ async def predict(request: LandmarksRequest) -> PredictionResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.post(
+    "/predict-video",
+    response_model=PredictionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Predecir seña desde un video",
+    description="Recibe un archivo de video, extrae landmarks con MediaPipe y retorna la predicción de la seña",
+)
+async def predict_from_video(file: UploadFile = File(...)) -> PredictionResponse:
+    try:
+        if not file.content_type or not file.content_type.startswith("video/"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El archivo debe ser un video válido",
+            )
+
+        suffix = os.path.splitext(file.filename or "video")[1] or ".mp4"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            contents = await file.read()
+            tmp.write(contents)
+            tmp_path = tmp.name
+
+        try:
+            landmarks = video_processor.extract_landmarks_from_video(tmp_path)
+            result = predictor.predict(landmarks)
+            return PredictionResponse(**result)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error procesando el video: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del servidor: {str(e)}",
         )
 
 
