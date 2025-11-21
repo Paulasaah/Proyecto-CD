@@ -9,11 +9,6 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@mediapipe/camera_utils": "^0.3.1675466862",
-    "@mediapipe/drawing_utils": "^0.3.1675466124",
-    "@mediapipe/hands": "^0.4.1675469240",
-    "@tensorflow/tfjs": "^4.22.0",
-    "@tensorflow/tfjs-react-native": "^1.0.0",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "expo": "~54.0.25",
@@ -22,6 +17,7 @@
     "expo-constants": "~18.0.10",
     "expo-gl": "^16.0.7",
     "expo-gl-cpp": "^11.4.0",
+    "expo-image-picker": "~17.0.8",
     "expo-linking": "~8.0.9",
     "expo-router": "~6.0.15",
     "expo-status-bar": "~3.0.8",

@@ -4,24 +4,32 @@
 import { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { View, StyleSheet, Alert, Platform } from 'react-native';
 import { Button, Text, Card, ActivityIndicator } from 'react-native-paper';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { usePredictionStore } from '../src/store/predictionStore';
-import { checkHealth, predictSign, predictSignFromVideo } from '../src/services/api';
-import { useMediaPipe } from '../src/hooks/useMediaPipe';
+import { checkHealth, predictSignFromVideo, predictSignFromVideoFile, translateGlosas } from '../src/services/api';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [permission, requestPermission] = useCameraPermissions();
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-  const [cameraEnabled, setCameraEnabled] = useState(true);
-  const cameraRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { currentPrediction, isLoading, setPrediction, addToHistory, setLoading, setError } = usePredictionStore();
-  const { captureFrames, processVideoFile, isProcessing, isReady: mediaPipeReady, error: mediaPipeError } = useMediaPipe();
+  const {
+    currentPrediction,
+    isLoading,
+    glosaPhrase,
+    spanishTranslation,
+    setPrediction,
+    addToHistory,
+    addGlosa,
+    removeLastGlosa,
+    clearGlosaPhrase,
+    setLoading,
+    setError,
+    setSpanishTranslation,
+  } = usePredictionStore();
 
   const isWeb = Platform.OS === 'web';
 
@@ -53,81 +61,97 @@ export default function HomeScreen() {
     }
   };
 
+  const handleVideoPickMobile = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Disponible solo en móvil', 'En web utiliza el botón de "Subir Video" estándar.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permisos', 'Se requiere acceso a la galería para seleccionar un video.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      if (!asset.uri) {
+        throw new Error('No se pudo obtener la URI del video seleccionado');
+      }
+
+      console.log('🎥 Procesando video seleccionado desde galería:', asset.uri);
+      const prediction = await predictSignFromVideo(asset.uri);
+
+      setPrediction(prediction);
+      addToHistory(prediction);
+      addGlosa(prediction.prediction);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido al seleccionar video';
+      setError(errorMessage);
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCapture = async () => {
     if (backendStatus !== 'online') {
       Alert.alert('Error', 'El backend no está disponible');
       return;
     }
-    // Flujo web: usar MediaPipe en el navegador
+    // En web, deshabilitar captura directa y usar solo "Subir Video"
     if (isWeb) {
-      if (!mediaPipeReady) {
-        Alert.alert(
-          'MediaPipe',
-          'MediaPipe todavía se está inicializando. Intenta de nuevo en unos segundos.'
-        );
-        return;
-      }
-
-      try {
-        setLoading(true);
-        if (!cameraEnabled) {
-          setCameraEnabled(true);
-        }
-        // Obtener el elemento de video (en web)
-        const videoElement = document.querySelector('video') as HTMLVideoElement;
-        if (!videoElement) {
-          throw new Error('No se encontró el elemento de video');
-        }
-
-        // Capturar 40 frames con landmarks
-        console.log('🎬 Capturando seña (web)...');
-        const landmarks = await captureFrames(videoElement);
-        
-        // Enviar al backend
-        console.log('📤 Enviando al backend...');
-        const prediction = await predictSign(landmarks);
-        
-        // Actualizar estado
-        setPrediction(prediction);
-        addToHistory(prediction);
-        
-        console.log('✅ Predicción:', prediction.prediction, `(${(prediction.confidence * 100).toFixed(1)}%)`);
-        
-      } catch (error) {
-        console.error('❌ Error en captura (web):', error);
-        const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-        setError(errorMessage);
-        Alert.alert('Error', `No se pudo procesar la seña: ${errorMessage}`);
-      } finally {
-        setLoading(false);
-      }
-
+      Alert.alert(
+        'Disponible solo en móvil',
+        'La captura directa de seña está disponible en la app móvil. En web usa "Subir Video" para enviar un archivo.'
+      );
       return;
     }
 
-    // Flujo móvil nativo: grabar un video corto y enviarlo al backend
+    // Flujo móvil nativo: usar la cámara del sistema para grabar un video y enviarlo al backend
     try {
-      if (!cameraRef.current) {
-        throw new Error('La cámara no está lista');
-      }
-
       setLoading(true);
       console.log('🎬 Grabando video de la seña (móvil)...');
 
-      const recording = await cameraRef.current.recordAsync({
-        maxDuration: 3,
-        quality: '480p',
-      });
-
-      if (!recording?.uri) {
-        throw new Error('No se pudo obtener el video grabado');
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permisos', 'Se requiere acceso a la cámara para grabar un video.');
+        return;
       }
 
-      console.log('📤 Enviando video al backend...');
-      const prediction = await predictSignFromVideo(recording.uri);
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: false,
+        quality: 0.7,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      if (!asset.uri) {
+        throw new Error('No se pudo obtener la URI del video grabado');
+      }
+
+      console.log('📤 Enviando video grabado al backend...');
+      const prediction = await predictSignFromVideo(asset.uri);
 
       setPrediction(prediction);
       addToHistory(prediction);
+      addGlosa(prediction.prediction);
 
       console.log('✅ Predicción desde video (móvil):', prediction.prediction, `(${(prediction.confidence * 100).toFixed(1)}%)`);
     } catch (error) {
@@ -141,11 +165,13 @@ export default function HomeScreen() {
   };
 
   const handleUploadClick = () => {
-    if (Platform.OS !== 'web') {
-      Alert.alert('Disponible solo en web', 'La carga de videos se encuentra disponible en la versión web del demo.');
+    if (Platform.OS === 'web') {
+      fileInputRef.current?.click();
       return;
     }
-    fileInputRef.current?.click();
+
+    // En móvil, permitir seleccionar un video desde la galería
+    handleVideoPickMobile();
   };
 
   const handleVideoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -153,13 +179,12 @@ export default function HomeScreen() {
     if (!file) return;
 
     try {
-      setCameraEnabled(false);
       setLoading(true);
       console.log('🎥 Procesando video subido:', file.name);
-      const landmarks = await processVideoFile(file);
-      const prediction = await predictSign(landmarks);
+      const prediction = await predictSignFromVideoFile(file);
       setPrediction(prediction);
       addToHistory(prediction);
+      addGlosa(prediction.prediction);
       console.log('✅ Predicción desde video:', prediction.prediction);
     } catch (error) {
       console.error('❌ Error procesando video:', error);
@@ -168,31 +193,28 @@ export default function HomeScreen() {
       Alert.alert('Error', errorMessage);
     } finally {
       setLoading(false);
-      setCameraEnabled(true);
       event.target.value = '';
     }
   };
 
-  if (!permission) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
+  const handleTranslateGlosas = async () => {
+    if (glosaPhrase.length === 0) {
+      Alert.alert('Sin glosas', 'Primero captura al menos una seña para generar glosas.');
+      return;
+    }
 
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.message}>
-          Necesitamos acceso a la cámara para reconocer señas
-        </Text>
-        <Button mode="contained" onPress={requestPermission} style={styles.button}>
-          Permitir Cámara
-        </Button>
-      </View>
-    );
-  }
+    try {
+      setLoading(true);
+      const response = await translateGlosas(glosaPhrase);
+      setSpanishTranslation(response.spanish);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error desconocido al traducir glosas';
+      setError(message);
+      Alert.alert('Error', `No se pudo traducir la frase de glosas: ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -211,55 +233,24 @@ export default function HomeScreen() {
             </Text>
           </View>
           <View style={[styles.statusRow, { marginTop: 8 }]}>
-            <Text variant="bodyMedium">MediaPipe:</Text>
-            <View
-              style={[
-                styles.statusIndicator,
-                {
-                  backgroundColor: isWeb
-                    ? (mediaPipeReady ? '#4caf50' : '#ff9800')
-                    : '#9e9e9e',
-                },
-              ]}
-            />
-            <Text variant="bodyMedium">
-              {isWeb
-                ? (mediaPipeReady ? 'Listo' : 'Cargando...')
-                : 'No disponible en móvil (demo web)'}
-            </Text>
+            <Text variant="bodyMedium">Procesamiento:</Text>
+            <Text variant="bodyMedium">Video → Backend TensorFlow</Text>
           </View>
-          {mediaPipeError && (
-            <Text variant="bodySmall" style={styles.mediaPipeErrorText}>
-              {mediaPipeError}
-            </Text>
-          )}
         </Card.Content>
       </Card>
 
       {/* Vista de Cámara */}
       <View style={styles.cameraContainer}>
-        {cameraEnabled ? (
-          <CameraView 
-            ref={cameraRef}
-            style={styles.camera}
-            facing="front"
-          >
-            <View style={styles.overlay}>
-              <Text style={styles.overlayText}>
-                {isLoading || isProcessing 
-                  ? '⏳ Procesando...' 
-                  : 'Coloca tu mano frente a la cámara'}
-              </Text>
-            </View>
-          </CameraView>
-        ) : (
-          <View style={styles.cameraPaused}>
-            <Text style={styles.pauseTitle}>Modo video activo</Text>
-            <Text style={styles.pauseSubtitle}>
-              La cámara se reanudará automáticamente al terminar el procesamiento del video.
-            </Text>
-          </View>
-        )}
+        <View style={styles.cameraPaused}>
+          <Text style={styles.pauseTitle}>
+            {Platform.OS === 'web'
+              ? 'En web, usa "Subir Video" para elegir un archivo de seña desde tu computadora.'
+              : 'Usa "Capturar Seña" o "Subir Video" para grabar o seleccionar un video desde tu dispositivo.'}
+          </Text>
+          <Text style={styles.pauseSubtitle}>
+            El procesamiento de la seña se realiza en el backend con TensorFlow.
+          </Text>
+        </View>
       </View>
 
       {/* Resultado de Predicción */}
@@ -317,6 +308,55 @@ export default function HomeScreen() {
         </Card>
       )}
 
+      {/* Frase de glosas */}
+      {glosaPhrase.length > 0 && (
+        <Card style={styles.glosaCard}>
+          <Card.Content>
+            <Text variant="titleMedium" style={styles.glosaTitle}>
+              Frase de glosas
+            </Text>
+            <Text variant="bodyMedium" style={styles.glosaText}>
+              {glosaPhrase.join(' / ')}
+            </Text>
+            {spanishTranslation && (
+              <>
+                <Text variant="titleSmall" style={styles.translationTitle}>
+                  Traducción al español
+                </Text>
+                <Text variant="bodyMedium" style={styles.translationText}>
+                  {spanishTranslation}
+                </Text>
+              </>
+            )}
+
+            <View style={styles.glosaButtonRow}>
+              <Button
+                mode="outlined"
+                onPress={removeLastGlosa}
+                style={styles.glosaButton}
+              >
+                Deshacer última glosa
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={clearGlosaPhrase}
+                style={styles.glosaButton}
+              >
+                Limpiar frase
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handleTranslateGlosas}
+                style={styles.glosaButton}
+                disabled={isLoading || backendStatus !== 'online'}
+              >
+                Traducir a español
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
+
       {Platform.OS === 'web' && (
         <input
           ref={fileInputRef}
@@ -332,25 +372,22 @@ export default function HomeScreen() {
         <Button 
           mode="contained" 
           onPress={handleCapture}
-          loading={isLoading || isProcessing}
+          loading={isLoading}
           disabled={
             isLoading ||
-            isProcessing ||
-            backendStatus !== 'online' ||
-            (isWeb && (!mediaPipeReady || !cameraEnabled))
+            backendStatus !== 'online'
           }
           style={styles.captureButton}
           icon="camera"
         >
-          {isLoading || isProcessing ? 'Procesando...' : 
-           !mediaPipeReady ? 'Cargando MediaPipe...' : 'Capturar Seña'}
+          {isLoading ? 'Procesando...' : 'Capturar Seña'}
         </Button>
         
         <Button
           mode="outlined"
           icon="upload"
           onPress={handleUploadClick}
-          disabled={isLoading || isProcessing || backendStatus !== 'online' || !mediaPipeReady}
+          disabled={isLoading || backendStatus !== 'online'}
           style={styles.uploadButton}
         >
           Subir Video
@@ -402,6 +439,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     elevation: 4,
   },
+  cameraWrapper: {
+    flex: 1,
+    position: 'relative',
+  },
   camera: {
     flex: 1,
   },
@@ -414,7 +455,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -492,6 +533,16 @@ const styles = StyleSheet.create({
     color: 'white',
     textAlign: 'center',
   },
+  top3ButtonsContainer: {
+    marginTop: 8,
+    gap: 4,
+  },
+  top3Button: {
+    alignSelf: 'stretch',
+  },
+  addGlosaButton: {
+    marginTop: 12,
+  },
   buttonContainer: {
     padding: 16,
     gap: 12,
@@ -505,10 +556,29 @@ const styles = StyleSheet.create({
   historyButton: {
     borderColor: '#6200ee',
   },
-  mediaPipeErrorText: {
-    marginTop: 4,
+  glosaCard: {
     marginHorizontal: 16,
-    color: '#f44336',
-    fontSize: 12,
+    marginBottom: 8,
+  },
+  glosaTitle: {
+    marginBottom: 4,
+  },
+  glosaText: {
+    fontWeight: 'bold',
+  },
+  glosaButtonRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  glosaButton: {
+    flex: 1,
+  },
+  translationTitle: {
+    marginTop: 8,
+  },
+  translationText: {
+    marginTop: 2,
   },
 });

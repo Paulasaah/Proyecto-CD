@@ -34,3 +34,9 @@ export interface PredictionHistory {
   timestamp: Date;
   top_3: TopPrediction[];
 }
+
+// Respuesta de traducción de glosas
+export interface GlosaTranslateResponse {
+  glosas: string[];
+  spanish: string;
+}

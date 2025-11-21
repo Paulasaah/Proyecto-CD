@@ -21,7 +21,7 @@ class PredictorService:
     _model = None
     _labels = None
 
-    MODEL_DIR = Path("models/best_advanced_lsc")
+    MODEL_DIR = Path("models/model (2)")
 
     def __new__(cls):
         """Implementación del patrón Singleton."""

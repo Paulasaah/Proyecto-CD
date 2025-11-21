@@ -10,13 +10,19 @@ interface PredictionStore {
   history: PredictionHistory[];
   isLoading: boolean;
   error: string | null;
+  glosaPhrase: string[];
+  spanishTranslation: string | null;
   
   // Acciones
   setPrediction: (prediction: PredictionResponse) => void;
   addToHistory: (prediction: PredictionResponse) => void;
   clearHistory: () => void;
+  addGlosa: (label: string) => void;
+  removeLastGlosa: () => void;
+  clearGlosaPhrase: () => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  setSpanishTranslation: (text: string | null) => void;
 }
 
 export const usePredictionStore = create<PredictionStore>((set) => ({
@@ -25,6 +31,8 @@ export const usePredictionStore = create<PredictionStore>((set) => ({
   history: [],
   isLoading: false,
   error: null,
+  glosaPhrase: [],
+  spanishTranslation: null,
   
   // Acciones
   setPrediction: (prediction) => 
@@ -46,7 +54,21 @@ export const usePredictionStore = create<PredictionStore>((set) => ({
   
   clearHistory: () => set({ history: [] }),
   
+  addGlosa: (label) =>
+    set((state) => ({
+      glosaPhrase: [...state.glosaPhrase, label.toUpperCase()],
+    })),
+
+  removeLastGlosa: () =>
+    set((state) => ({
+      glosaPhrase: state.glosaPhrase.slice(0, -1),
+    })),
+
+  clearGlosaPhrase: () => set({ glosaPhrase: [] }),
+  
   setLoading: (isLoading) => set({ isLoading }),
   
   setError: (error) => set({ error, isLoading: false }),
+
+  setSpanishTranslation: (text) => set({ spanishTranslation: text }),
 }));
