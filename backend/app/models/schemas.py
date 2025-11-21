@@ -65,3 +65,14 @@ class HealthResponse(BaseModel):
     """Respuesta del endpoint de health check."""
     status: str
     model_loaded: bool = False
+
+
+class GlosaTranslateRequest(BaseModel):
+    """Request para traducir una frase de glosas a español."""
+    glosas: List[str]
+
+
+class GlosaTranslateResponse(BaseModel):
+    """Respuesta con glosas originales y frase en español."""
+    glosas: List[str]
+    spanish: str

@@ -6,15 +6,23 @@ import os
 import tempfile
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File
-from app.models.schemas import LandmarksRequest, PredictionResponse, HealthResponse
+from app.models.schemas import (
+    LandmarksRequest,
+    PredictionResponse,
+    HealthResponse,
+    GlosaTranslateRequest,
+    GlosaTranslateResponse,
+)
 from app.services.predictor import PredictorService
 from app.services.video_processor import VideoProcessorService
+from app.services.glosa_service import GlosaService
 
 router = APIRouter()
 
 # Inicializar servicios (singleton)
 predictor = PredictorService.get_instance()
 video_processor = VideoProcessorService()
+glosa_service = GlosaService()
 
 
 @router.post(
@@ -87,6 +95,24 @@ async def predict_from_video(file: UploadFile = File(...)) -> PredictionResponse
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error procesando el video: {str(e)}",
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del servidor: {str(e)}",
+        )
+
+
+@router.post(
+    "/translate-glosas",
+    response_model=GlosaTranslateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Traducir una frase de glosas a español",
+    description="Recibe una lista de glosas y devuelve una frase simple en español.",
+)
+async def translate_glosas(request: GlosaTranslateRequest) -> GlosaTranslateResponse:
+    try:
+        sentence = glosa_service.translate(request.glosas)
+        return GlosaTranslateResponse(glosas=request.glosas, spanish=sentence)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
