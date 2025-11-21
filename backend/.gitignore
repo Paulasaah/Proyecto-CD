@@ -61,7 +61,7 @@ models/*.keras
 !models/label_map.json
 !models/config.json
 !models/metadata.json
-
+!models/best_advanced_lsc/model.weights.h5
 # pyenv
 .python-version
 
