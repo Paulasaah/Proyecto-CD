@@ -1,6 +1,7 @@
 /**
  * Cliente API para comunicación con el backend FastAPI
  */
+import { Platform } from 'react-native';
 import axios from 'axios';
 import { PredictionResponse, LandmarksRequest, GlosaTranslateResponse } from '../types';
 
@@ -12,7 +13,13 @@ import { PredictionResponse, LandmarksRequest, GlosaTranslateResponse } from '..
 
 //const API_BASE_URL = 'http://52.90.134.62:8080/api/v1';
 //const API_BASE_URL = 'http://localhost:8080/api/v1';
-const API_BASE_URL = 'http://192.168.1.38:8080/api/v1';
+
+// En web (navegador en esta máquina) usamos localhost.
+// En móvil (Expo Go en el teléfono) usamos la IP local de tu PC.
+const LOCAL_WEB_URL = 'http://localhost:8080/api/v1';
+const LOCAL_LAN_URL = 'http://172.17.68.71:8080/api/v1';
+
+const API_BASE_URL = Platform.OS === 'web' ? LOCAL_WEB_URL : LOCAL_LAN_URL;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
